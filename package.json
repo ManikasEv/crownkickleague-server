@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "vercel-build": "node -e \"console.log('Vercel build step: serverless API ready')\""
   },
   "dependencies": {
     "@clerk/express": "^1.7.14",
