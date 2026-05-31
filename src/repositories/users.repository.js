@@ -62,9 +62,11 @@ export async function refreshAllUserPointsFromPredictions() {
          updated_at = NOW()
      FROM (
        SELECT u.id AS user_id,
-              COALESCE(SUM(fp.points_awarded), 0) AS total_points
+              COALESCE(SUM(fp.points_awarded), 0)
+              + COALESCE(MAX(wbp.points_awarded), 0) AS total_points
        FROM app_users u
        LEFT JOIN fixture_predictions fp ON fp.user_id = u.id
+       LEFT JOIN winner_bonus_predictions wbp ON wbp.user_id = u.id
        GROUP BY u.id
      ) AS points_by_user
      WHERE au.id = points_by_user.user_id`,

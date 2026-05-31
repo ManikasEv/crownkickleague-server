@@ -117,3 +117,14 @@ CREATE TABLE IF NOT EXISTS fixture_predictions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, fixture_id)
 );
+
+CREATE TABLE IF NOT EXISTS winner_bonus_predictions (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  predicted_team TEXT NOT NULL,
+  potential_points INTEGER NOT NULL DEFAULT 3,
+  points_awarded INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id)
+);

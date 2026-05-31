@@ -567,3 +567,23 @@ export async function fetchWorldCupGroupStandingsLive() {
   }
   throw new Error("Group standings are not available for the selected live provider.");
 }
+
+export async function fetchWorldCupTeamsLive() {
+  const groups = await fetchWorldCupGroupStandingsLive();
+  const seen = new Set();
+  const teams = [];
+
+  groups.forEach((group) => {
+    const table = Array.isArray(group?.table) ? group.table : [];
+    table.forEach((row) => {
+      const teamName = String(row?.teamName || "").trim();
+      const key = teamName.toLowerCase();
+      if (!teamName || seen.has(key)) return;
+      seen.add(key);
+      teams.push(teamName);
+    });
+  });
+
+  teams.sort((a, b) => a.localeCompare(b));
+  return teams;
+}

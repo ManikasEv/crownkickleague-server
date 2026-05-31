@@ -141,6 +141,16 @@ export async function listLiveFixtures() {
   return rows;
 }
 
+export async function getStartedMatchdayCount() {
+  const { rows } = await pool.query(
+    `SELECT COUNT(DISTINCT matchday) AS started_count
+     FROM tournament_fixtures
+     WHERE kickoff_at IS NOT NULL
+       AND kickoff_at <= NOW()`,
+  );
+  return Number(rows[0]?.started_count ?? 0);
+}
+
 export async function findFixtureById(fixtureId) {
   const { rows } = await pool.query(
     `SELECT id, external_fixture_id, source, matchday, stage, match_order, home_team, away_team, kickoff_at, status, home_score, away_score
@@ -210,12 +220,55 @@ export async function createOrUpdateFixturePrediction({
 
 export async function sumPointsForUser(userId) {
   const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(points_awarded), 0) AS total
-     FROM fixture_predictions
-     WHERE user_id = $1`,
+    `SELECT
+       COALESCE((SELECT SUM(points_awarded) FROM fixture_predictions WHERE user_id = $1), 0)
+       +
+       COALESCE((SELECT SUM(points_awarded) FROM winner_bonus_predictions WHERE user_id = $1), 0)
+       AS total`,
     [userId],
   );
   return Number(rows[0]?.total ?? 0);
+}
+
+export async function getWinnerBonusPredictionByUserId(userId) {
+  const { rows } = await pool.query(
+    `SELECT id, user_id, predicted_team, potential_points, points_awarded, created_at, updated_at
+     FROM winner_bonus_predictions
+     WHERE user_id = $1
+     LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function upsertWinnerBonusPrediction({ userId, predictedTeam, potentialPoints }) {
+  const { rows } = await pool.query(
+    `INSERT INTO winner_bonus_predictions (user_id, predicted_team, potential_points, points_awarded)
+     VALUES ($1, $2, $3, 0)
+     ON CONFLICT (user_id)
+     DO UPDATE SET
+       predicted_team = EXCLUDED.predicted_team,
+       potential_points = EXCLUDED.potential_points,
+       points_awarded = CASE
+         WHEN winner_bonus_predictions.points_awarded > 0 THEN winner_bonus_predictions.points_awarded
+         ELSE 0
+       END,
+       updated_at = NOW()
+     RETURNING id, user_id, predicted_team, potential_points, points_awarded, created_at, updated_at`,
+    [userId, predictedTeam, potentialPoints],
+  );
+  return rows[0];
+}
+
+export async function getFinalFixtureResult() {
+  const { rows } = await pool.query(
+    `SELECT id, home_team, away_team, home_score, away_score, status
+     FROM tournament_fixtures
+     WHERE stage = 'final'
+     ORDER BY kickoff_at DESC NULLS LAST
+     LIMIT 1`,
+  );
+  return rows[0] ?? null;
 }
 
 export async function upsertTournamentFixtures(fixtures) {
@@ -307,5 +360,35 @@ export async function refreshPredictionPointsFromFinishedFixtures() {
      FROM tournament_fixtures tf
      WHERE tf.id = fp.fixture_id
        AND tf.status = 'finished'`,
+  );
+}
+
+export async function refreshWinnerBonusPoints() {
+  const finalFixture = await getFinalFixtureResult();
+  if (!finalFixture) return;
+
+  if (
+    String(finalFixture.status || "").toLowerCase() !== "finished" ||
+    finalFixture.home_score === null ||
+    finalFixture.away_score === null
+  ) {
+    return;
+  }
+
+  const homeScore = Number(finalFixture.home_score);
+  const awayScore = Number(finalFixture.away_score);
+  if (homeScore === awayScore) {
+    return;
+  }
+  const winnerTeam = homeScore > awayScore ? finalFixture.home_team : finalFixture.away_team;
+
+  await pool.query(
+    `UPDATE winner_bonus_predictions
+     SET points_awarded = CASE
+       WHEN LOWER(predicted_team) = LOWER($1) THEN potential_points
+       ELSE 0
+     END,
+     updated_at = NOW()`,
+    [winnerTeam],
   );
 }

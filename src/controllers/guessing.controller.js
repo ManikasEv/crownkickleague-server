@@ -7,12 +7,16 @@ import {
   findFixtureById,
   getMatchdayFirstKickoff,
   getMaxMatchday,
+  getStartedMatchdayCount,
+  getWinnerBonusPredictionByUserId,
   hasSyncedTournamentFixtures,
   listLiveFixtures,
   listFixturesByMatchday,
   listPredictionsByUserIdForMatchday,
   refreshPredictionPointsFromFinishedFixtures,
+  refreshWinnerBonusPoints,
   sumPointsForUser,
+  upsertWinnerBonusPrediction,
   upsertTournamentFixtures,
 } from "../repositories/guessing.repository.js";
 import { refreshAllUserPointsFromPredictions, updateUserPoints } from "../repositories/users.repository.js";
@@ -20,6 +24,7 @@ import { getOrCreateAppUserByClerkId } from "../services/users.service.js";
 import {
   fetchWorldCupFixturesLive,
   fetchWorldCupGroupStandingsLive,
+  fetchWorldCupTeamsLive,
 } from "../services/liveFootball.service.js";
 import { env } from "../config/env.js";
 import { getOddsForMatches } from "../services/odds.service.js";
@@ -45,6 +50,14 @@ const scorePredictionSchema = z.object({
 });
 
 const predictionSchema = z.union([outcomePredictionSchema, scorePredictionSchema]);
+const winnerBonusSchema = z.object({
+  predictedTeam: z.string().trim().min(2).max(80),
+});
+
+function computeWinnerBonusPotentialPoints(startedMatchdays) {
+  const drop = Math.max(0, startedMatchdays);
+  return Math.max(11 - drop, 3);
+}
 
 function getOutcomeFromScore(homeScore, awayScore) {
   if (homeScore > awayScore) return "1";
@@ -250,6 +263,7 @@ export async function postSyncLiveFixtures(_req, res) {
         const fixtures = await fetchWorldCupFixturesLive();
         await upsertTournamentFixtures(fixtures);
         await refreshPredictionPointsFromFinishedFixtures();
+        await refreshWinnerBonusPoints();
         await refreshAllUserPointsFromPredictions();
         const result = {
           synced: fixtures.length,
@@ -275,6 +289,71 @@ export async function postSyncLiveFixtures(_req, res) {
       message,
     });
   }
+}
+
+export async function getWinnerBonus(req, res) {
+  const { userId } = getAuth(req);
+  const userResult = await getOrCreateAppUserByClerkId(userId);
+  if (!userResult.ok) {
+    return res.status(userResult.status).json({ message: userResult.message });
+  }
+
+  const [teams, startedMatchdays, existingPrediction] = await Promise.all([
+    fetchWorldCupTeamsLive(),
+    getStartedMatchdayCount(),
+    getWinnerBonusPredictionByUserId(userResult.user.id),
+  ]);
+
+  return res.json({
+    potentialPoints: computeWinnerBonusPotentialPoints(startedMatchdays),
+    startedMatchdays,
+    teams,
+    prediction: existingPrediction
+      ? {
+          predictedTeam: existingPrediction.predicted_team,
+          potentialPoints: Number(existingPrediction.potential_points ?? 0),
+          pointsAwarded: Number(existingPrediction.points_awarded ?? 0),
+        }
+      : null,
+  });
+}
+
+export async function postWinnerBonus(req, res) {
+  const parsed = winnerBonusSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid winner bonus payload." });
+  }
+
+  const { userId } = getAuth(req);
+  const userResult = await getOrCreateAppUserByClerkId(userId);
+  if (!userResult.ok) {
+    return res.status(userResult.status).json({ message: userResult.message });
+  }
+
+  const [teams, startedMatchdays] = await Promise.all([
+    fetchWorldCupTeamsLive(),
+    getStartedMatchdayCount(),
+  ]);
+  const predictedTeam = parsed.data.predictedTeam.trim();
+  const valid = teams.some((team) => team.toLowerCase() === predictedTeam.toLowerCase());
+  if (!valid) {
+    return res.status(400).json({ message: "Team is not in available World Cup groups." });
+  }
+
+  const saved = await upsertWinnerBonusPrediction({
+    userId: userResult.user.id,
+    predictedTeam,
+    potentialPoints: computeWinnerBonusPotentialPoints(startedMatchdays),
+  });
+
+  await refreshWinnerBonusPoints();
+  await refreshAllUserPointsFromPredictions();
+
+  return res.json({
+    predictedTeam: saved.predicted_team,
+    potentialPoints: Number(saved.potential_points ?? 0),
+    pointsAwarded: Number(saved.points_awarded ?? 0),
+  });
 }
 
 export async function getLiveMatches(req, res) {
