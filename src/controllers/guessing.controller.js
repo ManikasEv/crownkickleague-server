@@ -24,6 +24,13 @@ import {
 import { env } from "../config/env.js";
 import { getOddsForMatches } from "../services/odds.service.js";
 
+const LIVE_SYNC_COOLDOWN_MS = 20 * 1000;
+const liveSyncState = {
+  inFlightPromise: null,
+  lastCompletedAt: 0,
+  lastResult: null,
+};
+
 const outcomePredictionSchema = z.object({
   matchId: z.coerce.number().int().positive(),
   predictionType: z.literal("outcome"),
@@ -230,16 +237,36 @@ export async function postPrediction(req, res) {
 
 export async function postSyncLiveFixtures(_req, res) {
   try {
-    const fixtures = await fetchWorldCupFixturesLive();
-    await upsertTournamentFixtures(fixtures);
-    await refreshPredictionPointsFromFinishedFixtures();
-    await refreshAllUserPointsFromPredictions();
+    const now = Date.now();
+    if (liveSyncState.lastResult && now - liveSyncState.lastCompletedAt < LIVE_SYNC_COOLDOWN_MS) {
+      return res.json({
+        ...liveSyncState.lastResult,
+        cached: true,
+      });
+    }
 
-    return res.json({
-      synced: fixtures.length,
-      source: env.LIVE_DATA_PROVIDER,
-    });
+    if (!liveSyncState.inFlightPromise) {
+      liveSyncState.inFlightPromise = (async () => {
+        const fixtures = await fetchWorldCupFixturesLive();
+        await upsertTournamentFixtures(fixtures);
+        await refreshPredictionPointsFromFinishedFixtures();
+        await refreshAllUserPointsFromPredictions();
+        const result = {
+          synced: fixtures.length,
+          source: env.LIVE_DATA_PROVIDER,
+          cached: false,
+        };
+        liveSyncState.lastCompletedAt = Date.now();
+        liveSyncState.lastResult = result;
+        return result;
+      })();
+    }
+
+    const result = await liveSyncState.inFlightPromise;
+    liveSyncState.inFlightPromise = null;
+    return res.json(result);
   } catch (error) {
+    liveSyncState.inFlightPromise = null;
     const message =
       env.NODE_ENV === "production"
         ? "Failed to sync live fixtures."
