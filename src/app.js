@@ -15,34 +15,17 @@ import guessingRoutes from "./routes/guessing.routes.js";
 import { errorHandler, notFoundHandler } from "./middlewares/error.middleware.js";
 
 const app = express();
-const allowedOrigins = String(env.CLIENT_URL || "")
-  .split(",")
-  .map((value) => value.trim())
-  .filter(Boolean);
-
-function isAllowedOrigin(origin) {
-  if (!origin) return true;
-  if (allowedOrigins.includes(origin)) return true;
-
-  // Allow Vercel preview/production frontend domains.
-  if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)) return true;
-
-  // Allow localhost during development.
-  if (/^http:\/\/localhost:\d+$/i.test(origin)) return true;
-
-  return false;
-}
+const corsOptions = {
+  // Reflect request origin to avoid production domain mismatch issues.
+  origin: true,
+  credentials: true,
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
 
 app.use(helmet());
 app.use(compression());
-app.use(
-  cors({
-    origin(origin, callback) {
-      callback(null, isAllowedOrigin(origin));
-    },
-    credentials: true,
-  }),
-);
+app.use(cors(corsOptions));
 app.use(express.json());
 if (env.NODE_ENV !== "production") {
   app.use(morgan("dev"));
