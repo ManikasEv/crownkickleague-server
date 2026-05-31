@@ -15,12 +15,26 @@ import guessingRoutes from "./routes/guessing.routes.js";
 import { errorHandler, notFoundHandler } from "./middlewares/error.middleware.js";
 
 const app = express();
+const allowedOrigins = String(env.CLIENT_URL || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 app.use(helmet());
 app.use(compression());
 app.use(
   cors({
-    origin: env.CLIENT_URL,
+    origin(origin, callback) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   }),
 );
