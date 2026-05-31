@@ -20,20 +20,25 @@ const allowedOrigins = String(env.CLIENT_URL || "")
   .map((value) => value.trim())
   .filter(Boolean);
 
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+
+  // Allow Vercel preview/production frontend domains.
+  if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)) return true;
+
+  // Allow localhost during development.
+  if (/^http:\/\/localhost:\d+$/i.test(origin)) return true;
+
+  return false;
+}
+
 app.use(helmet());
 app.use(compression());
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-      callback(new Error("Not allowed by CORS"));
+      callback(null, isAllowedOrigin(origin));
     },
     credentials: true,
   }),
