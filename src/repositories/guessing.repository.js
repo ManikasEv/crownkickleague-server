@@ -116,7 +116,7 @@ export async function getMatchdayFirstKickoff(matchday) {
 
 export async function listFixturesByMatchday(matchday) {
   const { rows } = await pool.query(
-    `SELECT id, external_fixture_id, source, matchday, stage, match_order, home_team, away_team, kickoff_at, status, home_score, away_score
+    `SELECT id, external_fixture_id, source, matchday, stage, group_label, match_order, home_team, away_team, kickoff_at, status, home_score, away_score
      FROM tournament_fixtures
      WHERE matchday = $1
      ORDER BY match_order ASC`,
@@ -127,7 +127,7 @@ export async function listFixturesByMatchday(matchday) {
 
 export async function listLiveFixtures() {
   const { rows } = await pool.query(
-    `SELECT id, matchday, stage, match_order, home_team, away_team, kickoff_at, status, home_score, away_score
+    `SELECT id, matchday, stage, group_label, match_order, home_team, away_team, kickoff_at, status, home_score, away_score
      FROM tournament_fixtures
      WHERE status = 'live'
      ORDER BY kickoff_at ASC NULLS LAST, match_order ASC`,
@@ -147,7 +147,7 @@ export async function getStartedMatchdayCount() {
 
 export async function findFixtureById(fixtureId) {
   const { rows } = await pool.query(
-    `SELECT id, external_fixture_id, source, matchday, stage, match_order, home_team, away_team, kickoff_at, status, home_score, away_score
+    `SELECT id, external_fixture_id, source, matchday, stage, group_label, match_order, home_team, away_team, kickoff_at, status, home_score, away_score
      FROM tournament_fixtures
      WHERE id = $1
      LIMIT 1`,
@@ -279,6 +279,7 @@ export async function upsertTournamentFixtures(fixtures) {
           source,
           matchday,
           stage,
+          group_label,
           match_order,
           home_team,
           away_team,
@@ -288,13 +289,14 @@ export async function upsertTournamentFixtures(fixtures) {
           away_score,
           updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
         ON CONFLICT (matchday, match_order)
         DO UPDATE SET
           external_fixture_id = EXCLUDED.external_fixture_id,
           source = EXCLUDED.source,
           matchday = EXCLUDED.matchday,
           stage = EXCLUDED.stage,
+          group_label = EXCLUDED.group_label,
           match_order = EXCLUDED.match_order,
           home_team = EXCLUDED.home_team,
           away_team = EXCLUDED.away_team,
@@ -308,6 +310,7 @@ export async function upsertTournamentFixtures(fixtures) {
           fixture.source,
           fixture.matchday,
           fixture.stage,
+          fixture.groupLabel ?? null,
           fixture.matchOrder,
           fixture.homeTeam,
           fixture.awayTeam,

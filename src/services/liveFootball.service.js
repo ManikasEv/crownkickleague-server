@@ -52,6 +52,15 @@ function mapRoundToStage(roundLabel) {
   return "group";
 }
 
+function extractGroupLabel(input) {
+  const value = String(input || "").toUpperCase().trim();
+  if (!value) return null;
+  const cleaned = value.replace("GROUP_", "GROUP ").replace(/\s+/g, " ");
+  const match = cleaned.match(/GROUP\s+([A-Z])/);
+  if (!match) return null;
+  return match[1];
+}
+
 function normalizeStatus(status) {
   const value = String(status || "").toLowerCase();
   if (["ft", "finished", "full-time", "ended", "completed"].includes(value)) return "finished";
@@ -135,6 +144,11 @@ function normalizeFixtureFromUnknownShape(raw) {
     mapRoundToStage(
       raw?.round ?? raw?.stage ?? raw?.league?.round ?? raw?.competition?.round ?? raw?.phase,
     ) || "group";
+  const groupLabel =
+    extractGroupLabel(raw?.group) ||
+    extractGroupLabel(raw?.league?.round) ||
+    extractGroupLabel(raw?.round) ||
+    null;
 
   const statusRaw =
     raw?.status ??
@@ -164,6 +178,7 @@ function normalizeFixtureFromUnknownShape(raw) {
     kickoffAt: dateValue ? new Date(dateValue).toISOString() : null,
     dateKey: dateValue ? String(dateValue).slice(0, 10) : "unknown",
     stage,
+    groupLabel,
     homeTeam,
     awayTeam,
     status: normalizeStatus(statusRaw),
@@ -234,6 +249,7 @@ function assignMatchdayAndOrder(fixtures, source) {
       source,
       matchday,
       stage: item.stage,
+      groupLabel: item.groupLabel ?? null,
       matchOrder,
       homeTeam: item.homeTeam,
       awayTeam: item.awayTeam,
@@ -387,6 +403,53 @@ async function fetchGroupedStandingsFromFootballDataMatches() {
     .sort((a, b) => groupLabelToSortValue(a.group) - groupLabelToSortValue(b.group));
 }
 
+function buildGroupsFromFlatStandingsAndMatches(totalRows, matches) {
+  const teamToGroup = new Map();
+  matches
+    .filter((match) => String(match?.stage || "").toUpperCase() === "GROUP_STAGE")
+    .forEach((match) => {
+      const groupLabel = normalizeGroupLabel(match?.group);
+      if (!groupLabel) return;
+      const home = String(match?.homeTeam?.name || "").trim();
+      const away = String(match?.awayTeam?.name || "").trim();
+      if (home) teamToGroup.set(home.toLowerCase(), groupLabel);
+      if (away) teamToGroup.set(away.toLowerCase(), groupLabel);
+    });
+
+  const groupedMap = new Map();
+  totalRows.forEach((row) => {
+    const teamName = String(row?.team?.name || "").trim();
+    if (!teamName) return;
+    const groupLabel = teamToGroup.get(teamName.toLowerCase());
+    if (!groupLabel) return;
+    if (!groupedMap.has(groupLabel)) groupedMap.set(groupLabel, []);
+    groupedMap.get(groupLabel).push({
+      position: Number(row?.position ?? 0),
+      teamName,
+      played: Number(row?.playedGames ?? 0),
+      won: Number(row?.won ?? 0),
+      draw: Number(row?.draw ?? 0),
+      lost: Number(row?.lost ?? 0),
+      goalsFor: Number(row?.goalsFor ?? 0),
+      goalsAgainst: Number(row?.goalsAgainst ?? 0),
+      goalDifference: Number(row?.goalDifference ?? 0),
+      points: Number(row?.points ?? 0),
+    });
+  });
+
+  return Array.from(groupedMap.entries())
+    .map(([group, table]) => ({
+      group,
+      table: table
+        .sort((a, b) => a.position - b.position)
+        .map((row, index) => ({
+          ...row,
+          position: index + 1,
+        })),
+    }))
+    .sort((a, b) => groupLabelToSortValue(a.group) - groupLabelToSortValue(b.group));
+}
+
 async function fetchGroupsFromFootballData() {
   assertFootballDataConfigured();
   const url = new URL(
@@ -432,8 +495,33 @@ async function fetchGroupsFromFootballData() {
     .sort((a, b) => groupLabelToSortValue(a.group) - groupLabelToSortValue(b.group));
 
   const groupedWithLabels = grouped.filter((entry) => /^[A-Z]$/.test(entry.group));
-  const finalGroups =
-    groupedWithLabels.length > 0 ? groupedWithLabels : await fetchGroupedStandingsFromFootballDataMatches();
+  let finalGroups = groupedWithLabels;
+  if (finalGroups.length === 0) {
+    const totalRowBlock = standings.find((entry) => String(entry?.type || "").toUpperCase() === "TOTAL");
+    const totalRows = Array.isArray(totalRowBlock?.table) ? totalRowBlock.table : [];
+    const groupedFromMatches = await fetchGroupedStandingsFromFootballDataMatches();
+    if (totalRows.length > 0) {
+      const matchesUrl = new URL(
+        `${env.FOOTBALL_DATA_BASE_URL}/competitions/${env.FOOTBALL_DATA_COMPETITION_CODE}/matches`,
+      );
+      matchesUrl.searchParams.set("season", String(env.FOOTBALL_DATA_SEASON));
+      const matchesResponse = await fetch(matchesUrl.toString(), {
+        headers: {
+          "X-Auth-Token": env.FOOTBALL_DATA_TOKEN,
+        },
+      });
+      if (matchesResponse.ok) {
+        const matchesPayload = await matchesResponse.json();
+        const matches = Array.isArray(matchesPayload?.matches) ? matchesPayload.matches : [];
+        const groupedFromApiStandings = buildGroupsFromFlatStandingsAndMatches(totalRows, matches);
+        finalGroups = groupedFromApiStandings.length > 0 ? groupedFromApiStandings : groupedFromMatches;
+      } else {
+        finalGroups = groupedFromMatches;
+      }
+    } else {
+      finalGroups = groupedFromMatches;
+    }
+  }
 
   latestGroupsCache = {
     provider: "football-data",
@@ -530,6 +618,7 @@ async function fetchFromFootballData() {
       kickoffAt: match?.utcDate || null,
       dateKey: match?.utcDate ? String(match.utcDate).slice(0, 10) : "unknown",
       stage: mapFootballDataStage(match?.stage),
+      groupLabel: extractGroupLabel(match?.group),
       homeTeam: match?.homeTeam?.name || "Unknown",
       awayTeam: match?.awayTeam?.name || "Unknown",
       status: normalizeFootballDataStatus(match?.status),

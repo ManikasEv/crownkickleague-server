@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS tournament_fixtures (
   source TEXT,
   matchday INTEGER NOT NULL,
   stage TEXT NOT NULL DEFAULT 'group',
+  group_label TEXT,
   match_order INTEGER NOT NULL,
   home_team TEXT NOT NULL,
   away_team TEXT NOT NULL,
@@ -103,6 +104,9 @@ ADD COLUMN IF NOT EXISTS external_fixture_id BIGINT UNIQUE;
 
 ALTER TABLE tournament_fixtures
 ADD COLUMN IF NOT EXISTS source TEXT;
+
+ALTER TABLE tournament_fixtures
+ADD COLUMN IF NOT EXISTS group_label TEXT;
 
 CREATE TABLE IF NOT EXISTS fixture_predictions (
   id BIGSERIAL PRIMARY KEY,
