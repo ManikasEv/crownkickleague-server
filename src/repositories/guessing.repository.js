@@ -1,18 +1,18 @@
 import { pool } from "../config/db.js";
 
 const KNOWN_MATCHDAYS = [
-  { matchday: 1, stage: "group", matches: [["Mexico", "South Africa"], ["USA", "Wales"], ["Spain", "Japan"]] },
-  { matchday: 2, stage: "group", matches: [["France", "Poland"], ["Brazil", "Serbia"], ["Argentina", "Morocco"]] },
-  { matchday: 3, stage: "group", matches: [["England", "Nigeria"], ["Portugal", "Ghana"], ["Belgium", "Korea Republic"]] },
-  { matchday: 4, stage: "group", matches: [["Germany", "Denmark"], ["Netherlands", "Croatia"], ["Italy", "Switzerland"]] },
-  { matchday: 5, stage: "group", matches: [["Uruguay", "Canada"], ["Colombia", "Chile"], ["Cameroon", "Ivory Coast"]] },
-  { matchday: 6, stage: "group", matches: [["Japan", "Australia"], ["Iran", "Saudi Arabia"], ["Senegal", "Tunisia"]] },
-  { matchday: 7, stage: "group", matches: [["USA", "Mexico"], ["Spain", "Portugal"], ["France", "Germany"]] },
-  { matchday: 8, stage: "group", matches: [["Brazil", "Argentina"], ["England", "Italy"], ["Belgium", "Netherlands"]] },
-  { matchday: 9, stage: "group", matches: [["Croatia", "Switzerland"], ["Denmark", "Poland"], ["Japan", "Korea Republic"]] },
-  { matchday: 10, stage: "group", matches: [["Morocco", "Ghana"], ["Nigeria", "Senegal"], ["Canada", "Chile"]] },
-  { matchday: 11, stage: "group", matches: [["South Africa", "Wales"], ["Australia", "Tunisia"], ["Saudi Arabia", "Iran"]] },
-  { matchday: 12, stage: "group", matches: [["Serbia", "Cameroon"], ["Ivory Coast", "Colombia"], ["Uruguay", "Paraguay"]] },
+  { matchday: 1, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 2, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 3, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 4, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 5, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 6, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 7, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 8, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 9, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 10, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 11, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
+  { matchday: 12, stage: "group", matches: [["Unknown", "Unknown"], ["Unknown", "Unknown"], ["Unknown", "Unknown"]] },
 ];
 
 const FUTURE_MATCHDAY_TEMPLATE = [
@@ -46,14 +46,8 @@ async function runEnsureFixtureTemplateMatches() {
            ON CONFLICT (matchday, match_order)
            DO UPDATE SET
              stage = EXCLUDED.stage,
-             home_team = CASE
-               WHEN tournament_fixtures.home_team = 'Unknown' THEN EXCLUDED.home_team
-               ELSE tournament_fixtures.home_team
-             END,
-             away_team = CASE
-               WHEN tournament_fixtures.away_team = 'Unknown' THEN EXCLUDED.away_team
-               ELSE tournament_fixtures.away_team
-             END,
+             home_team = EXCLUDED.home_team,
+             away_team = EXCLUDED.away_team,
              kickoff_at = COALESCE(tournament_fixtures.kickoff_at, $6),
              updated_at = NOW()`,
           [day.matchday, day.stage, i + 1, homeTeam, awayTeam, kickoffAt.toISOString()],

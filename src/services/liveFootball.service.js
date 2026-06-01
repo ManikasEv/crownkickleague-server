@@ -284,22 +284,107 @@ function normalizeGroupLabel(groupLabel) {
   return normalized.replace("GROUP_", "").replace("GROUP ", "").trim();
 }
 
-function buildAtoLGroupsFromFlatTable(flatTable) {
-  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".slice(0, 12).split("");
-  const groups = [];
-  for (let i = 0; i < letters.length; i += 1) {
-    const start = i * 4;
-    const slice = flatTable.slice(start, start + 4);
-    if (slice.length === 0) continue;
-    groups.push({
-      group: letters[i],
-      table: slice.map((row, index) => ({
-        ...row,
-        position: index + 1,
-      })),
-    });
+function createEmptyTeamStats(teamName) {
+  return {
+    teamName: teamName || "Unknown",
+    played: 0,
+    won: 0,
+    draw: 0,
+    lost: 0,
+    goalsFor: 0,
+    goalsAgainst: 0,
+    goalDifference: 0,
+    points: 0,
+  };
+}
+
+function applyMatchResultToStats(teamStats, goalsFor, goalsAgainst) {
+  teamStats.played += 1;
+  teamStats.goalsFor += goalsFor;
+  teamStats.goalsAgainst += goalsAgainst;
+  teamStats.goalDifference = teamStats.goalsFor - teamStats.goalsAgainst;
+  if (goalsFor > goalsAgainst) {
+    teamStats.won += 1;
+    teamStats.points += 3;
+    return;
   }
-  return groups;
+  if (goalsFor < goalsAgainst) {
+    teamStats.lost += 1;
+    return;
+  }
+  teamStats.draw += 1;
+  teamStats.points += 1;
+}
+
+function toSortedGroupTable(teamStatsMap) {
+  const rows = Array.from(teamStatsMap.values()).sort((a, b) => {
+    if (b.points !== a.points) return b.points - a.points;
+    if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
+    if (b.goalsFor !== a.goalsFor) return b.goalsFor - a.goalsFor;
+    return a.teamName.localeCompare(b.teamName);
+  });
+  return rows.map((row, index) => ({
+    position: index + 1,
+    ...row,
+  }));
+}
+
+async function fetchGroupedStandingsFromFootballDataMatches() {
+  assertFootballDataConfigured();
+  const url = new URL(
+    `${env.FOOTBALL_DATA_BASE_URL}/competitions/${env.FOOTBALL_DATA_COMPETITION_CODE}/matches`,
+  );
+  url.searchParams.set("season", String(env.FOOTBALL_DATA_SEASON));
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      "X-Auth-Token": env.FOOTBALL_DATA_TOKEN,
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`football-data matches failed (${response.status}): ${body}`);
+  }
+
+  const payload = await response.json();
+  const matches = Array.isArray(payload?.matches) ? payload.matches : [];
+  const groupMatches = matches.filter(
+    (match) => String(match?.stage || "").toUpperCase() === "GROUP_STAGE" && Boolean(match?.group),
+  );
+  if (groupMatches.length === 0) {
+    throw new Error("football-data did not return group-stage matches for this season.");
+  }
+
+  const groupsMap = new Map();
+  for (const match of groupMatches) {
+    const groupLabel = normalizeGroupLabel(match?.group);
+    if (!groupLabel) continue;
+
+    const homeTeam = String(match?.homeTeam?.name || "Unknown");
+    const awayTeam = String(match?.awayTeam?.name || "Unknown");
+    if (!groupsMap.has(groupLabel)) {
+      groupsMap.set(groupLabel, new Map());
+    }
+    const teamMap = groupsMap.get(groupLabel);
+    if (!teamMap.has(homeTeam)) teamMap.set(homeTeam, createEmptyTeamStats(homeTeam));
+    if (!teamMap.has(awayTeam)) teamMap.set(awayTeam, createEmptyTeamStats(awayTeam));
+
+    const homeScore = match?.score?.fullTime?.home;
+    const awayScore = match?.score?.fullTime?.away;
+    const hasScore = Number.isFinite(homeScore) && Number.isFinite(awayScore);
+    if (!hasScore) continue;
+
+    applyMatchResultToStats(teamMap.get(homeTeam), Number(homeScore), Number(awayScore));
+    applyMatchResultToStats(teamMap.get(awayTeam), Number(awayScore), Number(homeScore));
+  }
+
+  return Array.from(groupsMap.entries())
+    .map(([group, teamMap]) => ({
+      group,
+      table: toSortedGroupTable(teamMap),
+    }))
+    .sort((a, b) => groupLabelToSortValue(a.group) - groupLabelToSortValue(b.group));
 }
 
 async function fetchGroupsFromFootballData() {
@@ -346,17 +431,16 @@ async function fetchGroupsFromFootballData() {
     }))
     .sort((a, b) => groupLabelToSortValue(a.group) - groupLabelToSortValue(b.group));
 
-  const groupedOrSplit =
-    grouped.length === 1 && !grouped[0].group && grouped[0].table.length >= 48
-      ? buildAtoLGroupsFromFlatTable(grouped[0].table)
-      : grouped;
+  const groupedWithLabels = grouped.filter((entry) => /^[A-Z]$/.test(entry.group));
+  const finalGroups =
+    groupedWithLabels.length > 0 ? groupedWithLabels : await fetchGroupedStandingsFromFootballDataMatches();
 
   latestGroupsCache = {
     provider: "football-data",
     cachedAt: Date.now(),
-    data: groupedOrSplit,
+    data: finalGroups,
   };
-  return groupedOrSplit;
+  return finalGroups;
 }
 
 async function fetchGroupsFromApiFootball() {

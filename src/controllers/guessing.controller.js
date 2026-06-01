@@ -109,7 +109,20 @@ export async function getKnockoutMatches(req, res) {
 
   const hasSyncedFixtures = await hasSyncedTournamentFixtures();
   if (!hasSyncedFixtures) {
-    await ensureFixtureTemplateMatches();
+    try {
+      const fixtures = await fetchWorldCupFixturesLive();
+      if (fixtures.length > 0) {
+        await upsertTournamentFixtures(fixtures);
+        await refreshPredictionPointsFromFinishedFixtures();
+        await refreshWinnerBonusPoints();
+        await refreshAllUserPointsFromPredictions();
+      } else {
+        await ensureFixtureTemplateMatches();
+      }
+    } catch {
+      // Keep app usable if provider is temporarily unavailable.
+      await ensureFixtureTemplateMatches();
+    }
   }
   const maxMatchday = await getMaxMatchday();
   const selectedMatchday =
@@ -166,6 +179,8 @@ export async function getKnockoutMatches(req, res) {
     locked: lockState.locked,
     matches: mappedMatches.map((match) => ({
       id: match.id,
+      externalFixtureId: match.externalFixtureId,
+      source: match.source,
       matchday: match.matchday,
       stage: match.stage,
       matchOrder: match.matchOrder,
@@ -390,10 +405,16 @@ export async function getGroupStandings(_req, res) {
       groups,
     });
   } catch (error) {
+    const rawMessage = error?.message || "";
+    const explicitProviderMessage = rawMessage.includes(
+      "does not currently provide official World Cup group blocks",
+    );
     const message =
-      env.NODE_ENV === "production"
+      explicitProviderMessage
+        ? rawMessage
+        : env.NODE_ENV === "production"
         ? "Failed to load group standings."
-        : error?.message || "Failed to load group standings.";
+        : rawMessage || "Failed to load group standings.";
     return res.status(400).json({ message });
   }
 }
