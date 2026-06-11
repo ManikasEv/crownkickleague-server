@@ -301,9 +301,13 @@ export async function upsertTournamentFixtures(fixtures) {
           home_team = EXCLUDED.home_team,
           away_team = EXCLUDED.away_team,
           kickoff_at = EXCLUDED.kickoff_at,
-          status = EXCLUDED.status,
-          home_score = EXCLUDED.home_score,
-          away_score = EXCLUDED.away_score,
+          status = CASE
+            WHEN EXCLUDED.status = 'scheduled' AND tournament_fixtures.status IN ('live', 'finished')
+              THEN tournament_fixtures.status
+            ELSE EXCLUDED.status
+          END,
+          home_score = COALESCE(EXCLUDED.home_score, tournament_fixtures.home_score),
+          away_score = COALESCE(EXCLUDED.away_score, tournament_fixtures.away_score),
           updated_at = NOW()`,
         [
           fixture.externalFixtureId,
@@ -334,7 +338,7 @@ export async function refreshPredictionPointsFromFinishedFixtures() {
   await pool.query(
     `UPDATE fixture_predictions fp
      SET points_awarded = CASE
-       WHEN tf.home_score IS NULL OR tf.away_score IS NULL THEN 0
+       WHEN tf.home_score IS NULL OR tf.away_score IS NULL THEN fp.points_awarded
        WHEN fp.prediction_type = 'outcome' THEN
          CASE
            WHEN fp.predicted_outcome =
