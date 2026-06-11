@@ -611,26 +611,84 @@ async function fetchFromFootballData() {
   const remaining = Number(remainingHeader);
   const payload = await response.json();
   const matches = Array.isArray(payload?.matches) ? payload.matches : [];
+  const needsScoreFallback = matches.some((match) => {
+    const home = match?.score?.fullTime?.home;
+    const away = match?.score?.fullTime?.away;
+    return home === null || home === undefined || away === null || away === undefined;
+  });
+  const standingsByTeam = new Map();
+  if (needsScoreFallback) {
+    const standingsUrl = new URL(
+      `${env.FOOTBALL_DATA_BASE_URL}/competitions/${env.FOOTBALL_DATA_COMPETITION_CODE}/standings`,
+    );
+    standingsUrl.searchParams.set("season", String(env.FOOTBALL_DATA_SEASON));
+    const standingsResponse = await fetch(standingsUrl.toString(), {
+      headers: {
+        "X-Auth-Token": env.FOOTBALL_DATA_TOKEN,
+      },
+    });
+    if (standingsResponse.ok) {
+      const standingsPayload = await standingsResponse.json();
+      const totalRows = Array.isArray(standingsPayload?.standings)
+        ? standingsPayload.standings.find((entry) => String(entry?.type || "").toUpperCase() === "TOTAL")
+            ?.table || []
+        : [];
+      totalRows
+        .map((row) => ({
+          teamName: String(row?.team?.name || "").trim(),
+          playedGames: Number(row?.playedGames ?? 0),
+          goalsFor: Number(row?.goalsFor ?? 0),
+          goalsAgainst: Number(row?.goalsAgainst ?? 0),
+        }))
+        .filter((row) => row.teamName)
+        .forEach((row) => standingsByTeam.set(row.teamName.toLowerCase(), row));
+    }
+  }
 
   const normalized = matches
-    .map((match) => ({
-      externalFixtureId: Number(match?.id),
-      kickoffAt: match?.utcDate || null,
-      dateKey: match?.utcDate ? String(match.utcDate).slice(0, 10) : "unknown",
-      stage: mapFootballDataStage(match?.stage),
-      groupLabel: extractGroupLabel(match?.group),
-      homeTeam: match?.homeTeam?.name || "Unknown",
-      awayTeam: match?.awayTeam?.name || "Unknown",
-      status: normalizeFootballDataStatus(match?.status),
-      homeScore:
+    .map((match) => {
+      const homeTeam = match?.homeTeam?.name || "Unknown";
+      const awayTeam = match?.awayTeam?.name || "Unknown";
+      let homeScore =
         match?.score?.fullTime?.home === null || match?.score?.fullTime?.home === undefined
           ? null
-          : Number(match.score.fullTime.home),
-      awayScore:
+          : Number(match.score.fullTime.home);
+      let awayScore =
         match?.score?.fullTime?.away === null || match?.score?.fullTime?.away === undefined
           ? null
-          : Number(match.score.fullTime.away),
-    }))
+          : Number(match.score.fullTime.away);
+
+      // Fallback only when deterministic:
+      // if both teams have exactly one played match in standings, GF/GA pair reveals exact score.
+      if (homeScore === null || awayScore === null) {
+        const homeStanding = standingsByTeam.get(String(homeTeam).toLowerCase());
+        const awayStanding = standingsByTeam.get(String(awayTeam).toLowerCase());
+        const canInferSinglePlayed =
+          homeStanding &&
+          awayStanding &&
+          homeStanding.playedGames === 1 &&
+          awayStanding.playedGames === 1 &&
+          homeStanding.goalsFor === awayStanding.goalsAgainst &&
+          awayStanding.goalsFor === homeStanding.goalsAgainst;
+        if (canInferSinglePlayed) {
+          homeScore = Number(homeStanding.goalsFor);
+          awayScore = Number(awayStanding.goalsFor);
+        }
+      }
+
+      return {
+        externalFixtureId: Number(match?.id),
+        kickoffAt: match?.utcDate || null,
+        dateKey: match?.utcDate ? String(match.utcDate).slice(0, 10) : "unknown",
+        stage: mapFootballDataStage(match?.stage),
+        groupLabel: extractGroupLabel(match?.group),
+        homeTeam,
+        awayTeam,
+        status: normalizeFootballDataStatus(match?.status),
+        homeScore,
+        awayScore,
+      };
+    })
     .filter((item) => Number.isFinite(item.externalFixtureId));
 
   const fixtures = assignMatchdayAndOrder(normalized, "football-data");

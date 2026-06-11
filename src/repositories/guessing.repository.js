@@ -204,7 +204,7 @@ export async function createOrUpdateFixturePrediction({
       predicted_outcome = EXCLUDED.predicted_outcome,
       predicted_home_score = EXCLUDED.predicted_home_score,
       predicted_away_score = EXCLUDED.predicted_away_score,
-      points_awarded = EXCLUDED.points_awarded,
+      points_awarded = GREATEST(fixture_predictions.points_awarded, EXCLUDED.points_awarded),
       updated_at = NOW()
     RETURNING id, user_id, fixture_id, prediction_type, predicted_outcome, predicted_home_score, predicted_away_score, points_awarded`,
     [userId, fixtureId, predictionType, predictedOutcome, predictedHomeScore, predictedAwayScore, pointsAwarded],
@@ -337,26 +337,29 @@ export async function upsertTournamentFixtures(fixtures) {
 export async function refreshPredictionPointsFromFinishedFixtures() {
   await pool.query(
     `UPDATE fixture_predictions fp
-     SET points_awarded = CASE
-       WHEN tf.home_score IS NULL OR tf.away_score IS NULL THEN fp.points_awarded
-       WHEN fp.prediction_type = 'outcome' THEN
-         CASE
-           WHEN fp.predicted_outcome =
-             CASE
-               WHEN tf.home_score > tf.away_score THEN '1'
-               WHEN tf.home_score < tf.away_score THEN '2'
-               ELSE 'X'
-             END
-           THEN 1 ELSE 0
-         END
-       WHEN fp.prediction_type = 'score' THEN
-         CASE
-           WHEN fp.predicted_home_score = tf.home_score
-             AND fp.predicted_away_score = tf.away_score
-           THEN 3 ELSE 0
-         END
-       ELSE 0
-     END,
+     SET points_awarded = GREATEST(
+       fp.points_awarded,
+       CASE
+         WHEN tf.home_score IS NULL OR tf.away_score IS NULL THEN fp.points_awarded
+         WHEN fp.prediction_type = 'outcome' THEN
+           CASE
+             WHEN fp.predicted_outcome =
+               CASE
+                 WHEN tf.home_score > tf.away_score THEN '1'
+                 WHEN tf.home_score < tf.away_score THEN '2'
+                 ELSE 'X'
+               END
+             THEN 1 ELSE 0
+           END
+         WHEN fp.prediction_type = 'score' THEN
+           CASE
+             WHEN fp.predicted_home_score = tf.home_score
+               AND fp.predicted_away_score = tf.away_score
+             THEN 3 ELSE 0
+           END
+         ELSE 0
+       END
+     ),
      updated_at = NOW()
      FROM tournament_fixtures tf
      WHERE tf.id = fp.fixture_id`,
