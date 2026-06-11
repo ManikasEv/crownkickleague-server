@@ -80,22 +80,22 @@ function calculatePoints({ match, predictionType, predictedOutcome, predictedHom
   return predictedHomeScore === actualHome && predictedAwayScore === actualAway ? 3 : 0;
 }
 
-function getMatchdayLockState(firstKickoff) {
-  if (!firstKickoff) {
-    return {
-      firstKickoff: null,
-      lockAt: null,
-      locked: false,
-    };
+function getFixtureLockState({ kickoffAt, status }) {
+  const normalizedStatus = String(status || "").toLowerCase();
+  if (normalizedStatus === "finished") {
+    return { lockAt: null, locked: true };
   }
-
-  const firstKickoffDate = new Date(firstKickoff);
-  const lockAtDate = new Date(firstKickoffDate.getTime() - 3 * 60 * 60 * 1000);
-  const now = new Date();
+  if (!kickoffAt) {
+    return { lockAt: null, locked: false };
+  }
+  const kickoffDate = new Date(kickoffAt);
+  if (Number.isNaN(kickoffDate.getTime())) {
+    return { lockAt: null, locked: false };
+  }
+  const lockAtDate = new Date(kickoffDate.getTime() - 60 * 60 * 1000);
   return {
-    firstKickoff: firstKickoffDate.toISOString(),
     lockAt: lockAtDate.toISOString(),
-    locked: now >= lockAtDate,
+    locked: Date.now() >= lockAtDate.getTime(),
   };
 }
 
@@ -167,17 +167,24 @@ export async function getKnockoutMatches(req, res) {
     awayScore: match.away_score === null ? null : Number(match.away_score),
     kickoffAt: match.kickoff_at,
     prediction: predictionMap.get(Number(match.id)) ?? null,
+    ...getFixtureLockState({
+      kickoffAt: match.kickoff_at,
+      status: match.status,
+    }),
   }));
   const oddsByMatchId = await getOddsForMatches(mappedMatches);
-
-  const lockState = getMatchdayLockState(firstKickoff);
+  const nextLockAt = mappedMatches
+    .filter((match) => !match.locked && match.lockAt)
+    .map((match) => new Date(match.lockAt).getTime())
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b)[0];
 
   return res.json({
     matchday: selectedMatchday,
     maxMatchday,
-    firstKickoff: lockState.firstKickoff,
-    lockAt: lockState.lockAt,
-    locked: lockState.locked,
+    firstKickoff: firstKickoff ? new Date(firstKickoff).toISOString() : null,
+    lockAt: nextLockAt ? new Date(nextLockAt).toISOString() : null,
+    locked: false,
     matches: mappedMatches.map((match) => ({
       id: match.id,
       externalFixtureId: match.externalFixtureId,
@@ -192,6 +199,8 @@ export async function getKnockoutMatches(req, res) {
       homeScore: match.homeScore,
       awayScore: match.awayScore,
       kickoffAt: match.kickoffAt,
+      lockAt: match.lockAt,
+      locked: match.locked,
       prediction: match.prediction,
       odds: oddsByMatchId.get(match.id) ?? null,
     })),
@@ -224,10 +233,13 @@ export async function postPrediction(req, res) {
   const predictedOutcome = predictionType === "outcome" ? parsed.data.predictedOutcome : null;
   const predictedHomeScore = predictionType === "score" ? parsed.data.predictedHomeScore : null;
   const predictedAwayScore = predictionType === "score" ? parsed.data.predictedAwayScore : null;
-  const lockState = getMatchdayLockState(await getMatchdayFirstKickoff(fixture.matchday));
+  const lockState = getFixtureLockState({
+    kickoffAt: fixture.kickoff_at,
+    status: fixture.status,
+  });
   if (lockState.locked) {
     return res.status(403).json({
-      message: "Matchday is locked. Predictions are closed from 3 hours before first kickoff.",
+      message: "This match is locked. Predictions close 1 hour before kickoff.",
     });
   }
 
