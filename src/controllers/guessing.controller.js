@@ -99,6 +99,41 @@ function getFixtureLockState({ kickoffAt, status }) {
   };
 }
 
+async function runLiveSyncWithCooldown() {
+  const now = Date.now();
+  if (liveSyncState.lastResult && now - liveSyncState.lastCompletedAt < LIVE_SYNC_COOLDOWN_MS) {
+    return {
+      ...liveSyncState.lastResult,
+      cached: true,
+    };
+  }
+
+  if (!liveSyncState.inFlightPromise) {
+    liveSyncState.inFlightPromise = (async () => {
+      const fixtures = await fetchWorldCupFixturesLive();
+      await upsertTournamentFixtures(fixtures);
+      await refreshPredictionPointsFromFinishedFixtures();
+      await refreshWinnerBonusPoints();
+      await refreshAllUserPointsFromPredictions();
+      const result = {
+        synced: fixtures.length,
+        source: env.LIVE_DATA_PROVIDER,
+        cached: false,
+      };
+      liveSyncState.lastCompletedAt = Date.now();
+      liveSyncState.lastResult = result;
+      return result;
+    })();
+  }
+
+  try {
+    const result = await liveSyncState.inFlightPromise;
+    return result;
+  } finally {
+    liveSyncState.inFlightPromise = null;
+  }
+}
+
 export async function getKnockoutMatches(req, res) {
   const requestedMatchday = Number(req.query.matchday);
   const { userId } = getAuth(req);
@@ -122,6 +157,12 @@ export async function getKnockoutMatches(req, res) {
     } catch {
       // Keep app usable if provider is temporarily unavailable.
       await ensureFixtureTemplateMatches();
+    }
+  } else {
+    try {
+      await runLiveSyncWithCooldown();
+    } catch {
+      // Do not block response if provider sync is temporarily unavailable.
     }
   }
   const maxMatchday = await getMaxMatchday();
@@ -279,34 +320,7 @@ export async function postPrediction(req, res) {
 
 export async function postSyncLiveFixtures(_req, res) {
   try {
-    const now = Date.now();
-    if (liveSyncState.lastResult && now - liveSyncState.lastCompletedAt < LIVE_SYNC_COOLDOWN_MS) {
-      return res.json({
-        ...liveSyncState.lastResult,
-        cached: true,
-      });
-    }
-
-    if (!liveSyncState.inFlightPromise) {
-      liveSyncState.inFlightPromise = (async () => {
-        const fixtures = await fetchWorldCupFixturesLive();
-        await upsertTournamentFixtures(fixtures);
-        await refreshPredictionPointsFromFinishedFixtures();
-        await refreshWinnerBonusPoints();
-        await refreshAllUserPointsFromPredictions();
-        const result = {
-          synced: fixtures.length,
-          source: env.LIVE_DATA_PROVIDER,
-          cached: false,
-        };
-        liveSyncState.lastCompletedAt = Date.now();
-        liveSyncState.lastResult = result;
-        return result;
-      })();
-    }
-
-    const result = await liveSyncState.inFlightPromise;
-    liveSyncState.inFlightPromise = null;
+    const result = await runLiveSyncWithCooldown();
     return res.json(result);
   } catch (error) {
     liveSyncState.inFlightPromise = null;
@@ -390,6 +404,12 @@ export async function getLiveMatches(req, res) {
   const userResult = await getOrCreateAppUserByClerkId(userId);
   if (!userResult.ok) {
     return res.status(userResult.status).json({ message: userResult.message });
+  }
+
+  try {
+    await runLiveSyncWithCooldown();
+  } catch {
+    // Keep returning cached DB rows if provider fails transiently.
   }
 
   const rows = await listLiveFixtures();

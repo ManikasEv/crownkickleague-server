@@ -355,8 +355,7 @@ export async function refreshPredictionPointsFromFinishedFixtures() {
      END,
      updated_at = NOW()
      FROM tournament_fixtures tf
-     WHERE tf.id = fp.fixture_id
-       AND tf.status = 'finished'`,
+     WHERE tf.id = fp.fixture_id`,
   );
 }
 
