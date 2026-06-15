@@ -66,6 +66,8 @@ function getOutcomeFromScore(homeScore, awayScore) {
 }
 
 function calculatePoints({ match, predictionType, predictedOutcome, predictedHomeScore, predictedAwayScore }) {
+  const isFinished = String(match.status || "").toLowerCase() === "finished";
+  if (!isFinished) return 0;
   const hasFinalScore = match.home_score !== null && match.away_score !== null;
   if (!hasFinalScore) return 0;
 
