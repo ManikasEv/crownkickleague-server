@@ -658,9 +658,11 @@ async function fetchFromFootballData() {
           ? null
           : Number(match.score.fullTime.away);
 
-      // Fallback only when deterministic:
+      // Fallback only when deterministic AND match is finished:
       // if both teams have exactly one played match in standings, GF/GA pair reveals exact score.
-      if (homeScore === null || awayScore === null) {
+      const normalizedStatus = normalizeFootballDataStatus(match?.status);
+      const missingScore = homeScore === null || awayScore === null;
+      if (normalizedStatus === "finished" && missingScore) {
         const homeStanding = standingsByTeam.get(String(homeTeam).toLowerCase());
         const awayStanding = standingsByTeam.get(String(awayTeam).toLowerCase());
         const canInferSinglePlayed =
@@ -684,7 +686,7 @@ async function fetchFromFootballData() {
         groupLabel: extractGroupLabel(match?.group),
         homeTeam,
         awayTeam,
-        status: normalizeFootballDataStatus(match?.status),
+        status: normalizedStatus,
         homeScore,
         awayScore,
       };
